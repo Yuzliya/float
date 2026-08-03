@@ -142,9 +142,7 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig): Promise<B
             "Content-Type": "application/json",
         },
         body: JSON.stringify({
-            baseUrl,
-            apiKey:: config.apiKey,
-            model: config.config.apiKey,
+            model: config.config.model || "moss-tts",
             input: text,
             voice: config.defaultVoice || "default",
             response_format: "mp3",
