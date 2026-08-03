@@ -136,16 +136,17 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig): Promise<B
     if (!config.apiKey) throw new Error("OpenAI API Key 未配置");
 
     const baseUrl = config.baseUrl || "https://api.openai.com/v1";
-    const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/audio/speech`, {
+    const response = await fetchWithTimeout("/api/voice/openai-speech", {
         method: "POST",
         headers: {
-            Authorization: `Bearer ${config.apiKey}`,
             "Content-Type": "application/json",
         },
         body: JSON.stringify({
-            model: config.model || "tts-1",
+            baseUrl,
+            apiKey: config.apiKey,
+            model: config.model || "moss-tts",
             input: text,
-            voice: config.defaultVoice || "alloy",
+            voice: config.defaultVoice || "default",
             response_format: "mp3",
         }),
     });
