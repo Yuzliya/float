@@ -45,6 +45,7 @@
   "devDependencies": {
     "@gltf-transform/core": "^4.3.0",
     "@gltf-transform/extensions": "^4.3.0",
+    "@netlify/plugin-nextjs": "^5.5.0",
     "@tailwindcss/postcss": "^4.2.1",
     "@types/d3-delaunay": "^6.0.4",
     "@types/dompurify": "^3.0.5",
