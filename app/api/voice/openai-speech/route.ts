@@ -4,15 +4,23 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    const baseUrl = String(body.baseUrl || "").replace(/\/+$/, "");
-    const apiKey = String(body.apiKey || "");
+    // ✅ 从环境变量读取敏感信息
+    const baseUrl = process.env.MOSSLAND_BASE_URL || "https://api.mossland.ai/v1";
+    const apiKey = process.env.MOSSLAND_API_KEY;
     const model = String(body.model || "moss-tts");
     const input = String(body.input || "");
     const voice = String(body.voice || "default");
 
-    if (!baseUrl || !apiKey || !input) {
+    if (!apiKey) {
       return NextResponse.json(
-        { error: "baseUrl、apiKey、input 不能为空" },
+        { error: "服务端未配置 MOSSLAND_API_KEY" },
+        { status: 500 }
+      );
+    }
+
+    if (!input) {
+      return NextResponse.json(
+        { error: "input 不能为空" },
         { status: 400 }
       );
     }
