@@ -24,6 +24,7 @@ import type {
 const CUSTOM_APPS_KEY = "ai_phone_custom_apps_v1";
 const CUSTOM_APP_DATA_PREFIX = "ai_phone_custom_app_data_v1:";
 const CUSTOM_APP_TIMELINE_PREFIX = "ai_phone_custom_app_timeline_v1:";
+const CUSTOM_APP_ICON_STYLE_KEY = "ai_phone_custom_app_icon_styles_v1";
 
 export const CUSTOM_APPS_UPDATED_EVENT = "ai-phone-custom-apps-updated";
 /** 请求桌面为某个已安装应用摆放图标（detail: { appId }）。桌面 shell 监听并落位。 */
@@ -31,6 +32,7 @@ export const CUSTOM_APP_PLACE_DESKTOP_EVENT = "ai-phone-custom-app-place-desktop
 const GENERIC_PRIMARY_TAGS = new Set(["chat", "text", "custom_app", "group_chat"]);
 
 registerKvMigration(CUSTOM_APPS_KEY);
+registerKvMigration(CUSTOM_APP_ICON_STYLE_KEY);
 registerDynamicPrefix(CUSTOM_APP_DATA_PREFIX);
 registerDynamicPrefix(CUSTOM_APP_TIMELINE_PREFIX);
 
@@ -210,7 +212,8 @@ function formatInstallConflict(conflict: NonNullable<ReturnType<typeof getCustom
   if (conflict.type === "name") {
     return `已安装同名 APP「${conflict.app.name}」。想更新它请用「创作 → 本地测试」里的「换包」原地替换（数据保留），或先卸载旧应用、更换应用名称。`;
   }
-  return `主标签「${conflict.tag}」已被 APP「${conflict.app.name}」使用，请更换该 APP 的主标签。`;
+  // 文案是说给"正在安装的玩家"听的：他改不了标签，能做的只有二选一。
+  return `主标签「${conflict.tag}」与已安装的 APP「${conflict.app.name}」冲突：同一主标签的 APP 只能安装一个。想用新的，请先卸载「${conflict.app.name}」再安装；两个都想保留，可联系新 APP 的作者更换主标签。`;
 }
 
 function normalizePermission(value: unknown): CustomAppPermission | null {
@@ -753,6 +756,7 @@ function normalizeInstalledApp(raw: unknown): InstalledCustomApp | null {
       installedAt: cleanText(record.installedAt, 80) || new Date().toISOString(),
       updatedAt: cleanText(record.updatedAt, 80) || new Date().toISOString(),
       marketItemId: cleanText(record.marketItemId, 160) || undefined,
+      resourceHubPath: cleanText(record.resourceHubPath, 400) || undefined,
       hasUnpublishedChanges: record.hasUnpublishedChanges === true ? true : undefined,
     };
   } catch {
@@ -796,9 +800,47 @@ export function getInstalledCustomApp(appId: string): InstalledCustomApp | null 
   return loadInstalledCustomApps().find(app => app.id === id) ?? null;
 }
 
+/** 桌面图标样式（按 APP 保存，独立于安装记录，更新/换包不丢）：
+ *  cover = 上传图标铺满图标格（默认）；global = 忽略上传图标，走生成字形 + 全局图标效果 */
+export type CustomAppIconStyle = "cover" | "global";
+
+export function loadCustomAppIconStyles(): Record<string, CustomAppIconStyle> {
+  const raw = kvGet(CUSTOM_APP_ICON_STYLE_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const result: Record<string, CustomAppIconStyle> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (value === "global") result[key] = "global";
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+export function getCustomAppIconStyle(appId: string): CustomAppIconStyle {
+  return loadCustomAppIconStyles()[cleanId(appId)] ?? "cover";
+}
+
+export function setCustomAppIconStyle(appId: string, style: CustomAppIconStyle): void {
+  const id = cleanId(appId);
+  if (!id) return;
+  const styles = loadCustomAppIconStyles();
+  if (style === "cover") delete styles[id];
+  else styles[id] = style;
+  kvSet(CUSTOM_APP_ICON_STYLE_KEY, JSON.stringify(styles));
+  emitUpdated();
+}
+
 export function uninstallCustomApp(appId: string, options: { deleteData?: boolean } = {}): void {
   const id = cleanId(appId);
   saveInstalledCustomApps(loadInstalledCustomApps().filter(app => app.id !== id));
+  const iconStyles = loadCustomAppIconStyles();
+  if (iconStyles[id]) {
+    delete iconStyles[id];
+    kvSet(CUSTOM_APP_ICON_STYLE_KEY, JSON.stringify(iconStyles));
+  }
   if (options.deleteData) {
     // 先清媒体库 Blob(引用登记在 __media_refs 集合里),再删集合 key
     try {
