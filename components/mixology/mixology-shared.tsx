@@ -18,7 +18,9 @@ import {
     UserRound,
 } from "lucide-react";
 import type { MixCharacterCard, MixMaterial, MixMaterialKind } from "@/lib/mixology/types";
-import { MIX_DOCK_LABELS, MIX_KIND_LABELS, mixEncoreRenderHtml, mixKindHasCover, mixKindRunsActiveCode } from "@/lib/mixology/types";
+import { MIX_KIND_LABELS, MIX_PANEL_DEFAULT_LAYOUT, mixEncoreRenderHtml, mixKindHasCover, mixKindRunsActiveCode, mixPanelLayoutOf, mixPanelLayoutSummary, normalizeMixTags } from "@/lib/mixology/types";
+import { applyMixMacros, MIX_DEFAULT_USER_NAME } from "@/lib/mixology/assembler";
+import { MixPreviewInline } from "./mixology-preview";
 import { MixRichText } from "./rich-text";
 
 const KIND_ICONS: Record<MixMaterialKind, typeof UserRound> = {
@@ -59,12 +61,49 @@ export function formatMixTime(ts: number): string {
     return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+/**
+ * 卡面上的标签：只占一行，装不下的用省略号收掉——完整标签在详情弹窗里看。
+ * 用行内 span 而不是 inline-block，text-overflow 才能在裁到一半的标签上落省略号。
+ */
+function TagLine({ tags, className }: { tags?: string[]; className: string }) {
+    // 规整一遍再渲染：导入的 JSON 里什么都可能有，别让脏数据把卡片渲染搞崩
+    const list = normalizeMixTags(tags);
+    if (!list.length) return null;
+    return (
+        <div className={className}>
+            {list.map((tag) => (
+                <span className="mix-tag" key={tag}>{tag}</span>
+            ))}
+        </div>
+    );
+}
+
+/**
+ * 详情弹窗里的完整标签：换行摊开，不省略。
+ * 不带「标签」小标题——标签自己长得就像标签，再加一行字反而多余。
+ */
+export function MixTagList({ tags }: { tags?: string[] }) {
+    const list = normalizeMixTags(tags);
+    if (!list.length) return null;
+    return (
+        <div className="mix-detail-field">
+            <div className="mix-tag-list">
+                {list.map((tag) => (
+                    <span className="mix-tag" key={tag}>{tag}</span>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 /** 瀑布卡：本地酒柜与在线酒单共用（stats 行只有在线卡传） */
 export function MatCard({
     kind,
     name,
     hook,
+    tags,
     cover,
+    preview,
     badge,
     author,
     stats,
@@ -73,7 +112,10 @@ export function MatCard({
     kind: MixMaterialKind;
     name: string;
     hook?: string;
+    tags?: string[];
     cover?: string;
+    /** 没配封面时压在占位纹上的自动封面（材料自己的渲染缩样）；渲染不出内容就露出占位纹 */
+    preview?: ReactNode;
     badge?: string;
     author?: string;
     stats?: string;
@@ -84,10 +126,13 @@ export function MatCard({
     // 同尺寸的占位面），纯文本类（基底/文风/杯型/苦精）一律单列横条。
     if (mixKindHasCover(kind)) {
         return (
-            <div className="mix-mat-card" data-kind={kind} data-poster="true" onClick={onClick}>
+            <div className="mix-mat-card" data-kind={kind} data-poster="true" data-live={!cover && preview ? "true" : undefined} onClick={onClick}>
                 {cover ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img className="mix-mat-cover" src={cover} alt={name} />
+                ) : preview ? (
+                    // 自动封面走文档流：卡片高度=缩样实际高度，不垫占位纹（透明缩样底下不透图标）
+                    <div className="mix-poster-flow" aria-hidden="true">{preview}</div>
                 ) : (
                     <div className="mix-poster-blank"><KindGlyph kind={kind} size={42} /></div>
                 )}
@@ -96,6 +141,7 @@ export function MatCard({
                 <div className="mix-poster-veil">
                     <div className="mix-poster-name">{name}</div>
                     {hook ? <div className="mix-poster-hook">{hook}</div> : null}
+                    <TagLine tags={tags} className="mix-poster-tags" />
                     {stats ? <div className="mix-poster-stats">{stats}</div> : null}
                 </div>
             </div>
@@ -113,6 +159,7 @@ export function MatCard({
                     {mixKindRunsActiveCode(kind) ? <span className="mix-mat-badge" data-tone="code">含可执行逻辑</span> : null}
                 </div>
                 {hook ? <div className="mix-mat-hook">{hook}</div> : null}
+                <TagLine tags={tags} className="mix-mat-tags" />
                 {author || stats ? (
                     <div className="mix-mat-author">{[author ? `@${author}` : null, stats].filter(Boolean).join(" · ")}</div>
                 ) : null}
@@ -163,9 +210,11 @@ export function isSealedMaterial(material: { kind: string; imported?: boolean })
  * 别人的角色卡：设定正文不摊开，只留作者写给读者看的那两栏
  *（与应用市场、游戏大厅同规矩）。
  */
-export function SealedNote({ hook, canvas }: { hook?: string; canvas?: string }) {
+export function SealedNote({ hook, canvas, charName }: { hook?: string; canvas?: string; charName?: string }) {
     if (canvas?.trim()) {
-        return <div className="mix-canvas-block"><MixRichText text={canvas} /></div>;
+        // 详情页没有对局，{{user}} 没有名字可用，退回默认的「你」
+        const filled = applyMixMacros(canvas, charName ?? "", MIX_DEFAULT_USER_NAME, undefined, { escapeHtml: true });
+        return <div className="mix-canvas-block"><MixRichText text={filled} /></div>;
     }
     return <DetailField label="一句话介绍" value={hook} />;
 }
@@ -203,7 +252,7 @@ export function MaterialDetail({ material }: { material: MixMaterial }) {
         return (
             <>
                 <DetailField label="一句话介绍" value={material.hook} />
-                <DetailField label="代入名" value={material.userName} />
+                <DetailField label="你的名字" value={material.userName} />
                 <DetailField label="用户人设" value={material.content} />
             </>
         );
@@ -212,6 +261,13 @@ export function MaterialDetail({ material }: { material: MixMaterial }) {
         return (
             <>
                 <DetailField label="一句话介绍" value={material.hook} />
+                {/* 详情页先看效果再看字段：用作者留的示例数据就地渲染一遍 */}
+                <MixPreviewInline
+                    label="预览小票"
+                    guide={false}
+                    target={{ kind: "ticket", html: material.renderHtml, raw: material.previewRaw ?? "" }}
+                    disabled={!material.renderHtml?.trim()}
+                />
                 <DetailField label="输出契约" value={material.contract} />
                 <DetailField label="渲染代码" value={material.renderHtml} code />
             </>
@@ -221,16 +277,29 @@ export function MaterialDetail({ material }: { material: MixMaterial }) {
         return (
             <>
                 <DetailField label="一句话介绍" value={material.hook} />
-                <DetailField label="装饰 CSS" value={material.css} code />
+                <MixPreviewInline
+                    label="试穿看看"
+                    guide={false}
+                    target={{ kind: "garnish", css: material.css }}
+                    disabled={!material.css?.trim()}
+                />
+                <DetailField label="外观 CSS" value={material.css} code />
             </>
         );
     }
     if (material.kind === "encore") {
+        const encoreHtml = mixEncoreRenderHtml(material);
         return (
             <>
                 <DetailField label="一句话介绍" value={material.hook} />
+                <MixPreviewInline
+                    label="跑一下"
+                    guide={false}
+                    target={{ kind: "encore", html: encoreHtml, raw: material.previewRaw }}
+                    disabled={!encoreHtml.trim()}
+                />
                 <DetailField label="输出契约" value={material.contract} />
-                <DetailField label="渲染代码" value={mixEncoreRenderHtml(material)} code />
+                <DetailField label="渲染代码" value={encoreHtml} code />
             </>
         );
     }
@@ -238,6 +307,12 @@ export function MaterialDetail({ material }: { material: MixMaterial }) {
         return (
             <>
                 <DetailField label="一句话介绍" value={material.hook} />
+                <MixPreviewInline
+                    label="试跑规则"
+                    guide={false}
+                    target={{ kind: "filter", rules: material.rules }}
+                    disabled={!material.rules.length}
+                />
                 <DetailField
                     label={`清洗规则 · ${material.rules.length} 条`}
                     value={material.rules
@@ -249,11 +324,25 @@ export function MaterialDetail({ material }: { material: MixMaterial }) {
         );
     }
     if (material.kind === "mechanism") {
+        const layout = mixPanelLayoutOf(material);
         return (
             <>
                 <DetailField label="一句话介绍" value={material.hook} />
+                {/* 试摆跑在与编辑器同一块假对局舞台上：界面能拖能点，钩子能当场跑一遍 */}
+                <MixPreviewInline
+                    label="试摆一下"
+                    guide={false}
+                    target={{
+                        kind: "mechanism",
+                        name: material.name,
+                        html: material.panelHtml ?? "",
+                        layout: layout ?? MIX_PANEL_DEFAULT_LAYOUT,
+                        script: material.script ?? "",
+                    }}
+                    disabled={!material.panelHtml?.trim() && !material.script?.trim()}
+                />
                 <DetailField label="钩子逻辑" value={material.script} code />
-                {material.dock ? <DetailField label="常驻界面" value={`停靠在${MIX_DOCK_LABELS[material.dock]}`} /> : null}
+                {layout ? <DetailField label="界面摆放" value={mixPanelLayoutSummary(layout)} /> : null}
                 <DetailField label="界面代码" value={material.panelHtml} code />
             </>
         );
